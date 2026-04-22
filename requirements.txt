@@ -1,0 +1,50 @@
+# ─────────────────────────────────────────────https://in.linkedin.com/in/manojkumar-t-032035268?trk=public_profile_browsemap
+# Recipe GenAI System – Flexible (Python 3.13)
+# ─────────────────────────────────────────────
+
+# Core ML / Embeddings
+sentence-transformers
+faiss-cpu
+torch
+transformers
+
+
+pyarrow
+
+# LLM / RAG
+openai
+langchain
+langchain-openai
+langchain-community
+tiktoken
+
+# API
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+
+# Data Processing
+numpy
+pandas
+scikit-learn
+
+# NLP
+nltk
+regex
+unidecode
+
+# Utils
+python-dotenv
+tqdm
+loguru
+pyyaml
+httpx
+requests
+
+# UI
+streamlit
+
+# Testing
+pytest
+pytest-asyncio
