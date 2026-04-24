@@ -76,7 +76,17 @@ with main_col:
         
         with col1:
             ingredients_str = st.text_area("What ingredients do you have? (comma-separated)", "eggs, milk, flour, sugar")
-            context_hint = st.text_input("Context / Dietary Hint (Optional)", "E.g., breakfast, vegan, gluten-free")
+            cuisine_type = st.selectbox(
+                "🌍 Cuisine Type",
+                options=[
+                    "Any", "Indian", "Italian", "Mexican", "Chinese", "Japanese",
+                    "Mediterranean", "American", "French", "Thai", "Middle Eastern",
+                    "Korean", "Greek", "Spanish", "Vietnamese", "Lebanese"
+                ],
+                index=0,
+                help="Select the cuisine style you prefer. This guides the AI to suggest matching dishes."
+            )
+            context_hint = st.text_input("Dietary Hint (Optional)", placeholder="E.g., breakfast, vegan, gluten-free")
         
         with col2:
             top_k = st.number_input("Candidates to consider", min_value=1, max_value=20, value=5)
@@ -89,11 +99,19 @@ with main_col:
             if not ingredients:
                 st.warning("Please enter some ingredients.")
             else:
-                with st.spinner("Analyzing ingredients and generating recipe..."):
+                # Build combined context: cuisine + dietary hint
+                context_parts = []
+                if cuisine_type != "Any":
+                    context_parts.append(f"{cuisine_type} cuisine")
+                if context_hint.strip():
+                    context_parts.append(context_hint.strip())
+                combined_context = ", ".join(context_parts)
+
+                with st.spinner(f"Finding {''.join([cuisine_type + ' ']) if cuisine_type != 'Any' else ''}recipes with your ingredients..."):
                     try:
                         res = requests.post(f"{api_base}/api/v1/recommend", json={
                             "ingredients": ingredients,
-                            "context": context_hint,
+                            "context": combined_context,
                             "top_k": top_k,
                             "include_nutrition": include_nutrition
                         })
