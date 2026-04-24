@@ -4,10 +4,12 @@ import RecommendTab from './components/RecommendTab';
 import QuickSearchTab from './components/QuickSearchTab';
 import SubstitutionsTab from './components/SubstitutionsTab';
 import FavoritesTab from './components/FavoritesTab';
+import MealPlannerTab from './components/MealPlannerTab';
 import './index.css';
 
 const TABS = [
   { id: 'recommend', label: '✨ Recommend Recipe' },
+  { id: 'planner',   label: '📅 Meal Planner' },
   { id: 'search',    label: '🔍 Quick Search' },
   { id: 'subs',      label: '🔄 Substitutions' },
   { id: 'favorites', label: '⭐ Favorites & History' },
@@ -46,6 +48,7 @@ export default function App() {
 
         {/* Tab Content */}
         {activeTab === 'recommend' && <RecommendTab onAskAI={handleAskAI} />}
+        {activeTab === 'planner'   && <MealPlannerTab onAskAI={handleAskAI} />}
         {activeTab === 'search'    && <QuickSearchTab onAskAI={handleAskAI} />}
         {activeTab === 'subs'      && <SubstitutionsTab onAskAI={handleAskAI} />}
         {activeTab === 'favorites' && <FavoritesTab onAskAI={handleAskAI} />}

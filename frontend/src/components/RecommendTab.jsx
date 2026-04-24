@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import RecipeResult from './RecipeResult';
 
 const CUISINES = ['Any','Indian','Italian','Mexican','Chinese','Japanese','Mediterranean','American','French','Thai','Middle Eastern','Korean','Greek','Spanish','Vietnamese','Lebanese'];
 const COOK_TIMES = ['Any','Under 15 mins','Under 30 mins','Under 45 mins','Under 1 hour'];
 const DIFFICULTIES = ['Any','Easy','Medium','Hard'];
+const CALORIES = ['Any','Under 300 kcal','Under 500 kcal','Under 800 kcal','Under 1000 kcal'];
 
 export default function RecommendTab({ onAskAI }) {
   const [ingredients, setIngredients] = useState('eggs, milk, flour, sugar');
@@ -14,13 +15,45 @@ export default function RecommendTab({ onAskAI }) {
   const [servings, setServings] = useState(2);
   const [topK, setTopK] = useState(5);
   const [dietHint, setDietHint] = useState('');
+  const [maxCalories, setMaxCalories] = useState('Any');
   const [nutrition, setNutrition] = useState(false);
+  
+  // Pantry
+  const [pantry, setPantry] = useState([]);
+  const [newPantryItem, setNewPantryItem] = useState('');
+  const [usePantry, setUsePantry] = useState(true);
+
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    const p = JSON.parse(localStorage.getItem('recipePantry') || '["salt", "pepper", "olive oil"]');
+    setPantry(p);
+  }, []);
+
+  const addPantry = () => {
+    const val = newPantryItem.trim();
+    if (val && !pantry.includes(val)) {
+      const updated = [...pantry, val];
+      setPantry(updated);
+      localStorage.setItem('recipePantry', JSON.stringify(updated));
+    }
+    setNewPantryItem('');
+  };
+
+  const removePantry = (item) => {
+    const updated = pantry.filter(i => i !== item);
+    setPantry(updated);
+    localStorage.setItem('recipePantry', JSON.stringify(updated));
+  };
+
   const handleSubmit = async () => {
-    const ings = ingredients.split(',').map(s => s.trim()).filter(Boolean);
+    let ings = ingredients.split(',').map(s => s.trim()).filter(Boolean);
+    if (usePantry && pantry.length > 0) {
+      ings = [...ings, ...pantry];
+    }
+    
     if (!ings.length) { setError('Please enter at least one ingredient.'); return; }
     setError(''); setLoading(true); setResult(null);
 
@@ -28,6 +61,7 @@ export default function RecommendTab({ onAskAI }) {
     if (cuisine !== 'Any') parts.push(`${cuisine} cuisine`);
     if (difficulty !== 'Any') parts.push(`${difficulty} difficulty`);
     if (cookTime !== 'Any') parts.push(cookTime.toLowerCase());
+    if (maxCalories !== 'Any') parts.push(maxCalories.toLowerCase());
     parts.push(`serves ${servings} people`);
     if (dietHint.trim()) parts.push(dietHint.trim());
 
@@ -72,6 +106,33 @@ export default function RecommendTab({ onAskAI }) {
               <input className="form-input" value={dietHint} onChange={e => setDietHint(e.target.value)}
                 placeholder="e.g. vegan, low-carb, breakfast..." />
             </div>
+            
+            <div className="form-group" style={{ marginTop: '2rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <label className="form-label" style={{ margin: 0 }}>🧺 My Pantry Inventory</label>
+                <label className="checkbox-label" style={{ fontSize: '0.8rem' }}>
+                  <input type="checkbox" checked={usePantry} onChange={e => setUsePantry(e.target.checked)} />
+                  Use in Search
+                </label>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                <input className="form-input" value={newPantryItem} onChange={e => setNewPantryItem(e.target.value)}
+                  placeholder="Add staple (e.g. garlic)..." onKeyDown={e => e.key === 'Enter' && addPantry()} />
+                <button className="btn btn-ghost" onClick={addPantry}>Add</button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                {pantry.length === 0 ? (
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Pantry is empty.</span>
+                ) : (
+                  pantry.map(p => (
+                    <span key={p} className="ingredient-tag" style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      {p}
+                      <span style={{ cursor: 'pointer', opacity: 0.7 }} onClick={() => removePantry(p)}>×</span>
+                    </span>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
           <div>
             <div className="form-group">
@@ -95,6 +156,12 @@ export default function RecommendTab({ onAskAI }) {
               <label className="form-label">⭐ Difficulty</label>
               <select className="form-select" value={difficulty} onChange={e => setDifficulty(e.target.value)}>
                 {DIFFICULTIES.map(d => <option key={d}>{d}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">🔥 Calorie Budget</label>
+              <select className="form-select" value={maxCalories} onChange={e => setMaxCalories(e.target.value)}>
+                {CALORIES.map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
             <div className="form-group">
