@@ -17,5 +17,5 @@ export const api = {
   recommend: (payload) => post('/recommend', payload),
   quickSearch: (payload) => post('/search/quick', payload),
   substitutions: (payload) => post('/substitutions', payload),
-  chat: (message, context = '') => post('/chat', { message, context }),
+  chat: (message, context = '', history = []) => post('/chat', { message, context, history }),
 };

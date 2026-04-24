@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { api } from '../services/api';
+import ReactMarkdown from 'react-markdown';
 
 export default function AISidebar({ onAskAI }) {
   const [messages, setMessages] = useState([]);
@@ -14,11 +15,17 @@ export default function AISidebar({ onAskAI }) {
   const sendMessage = async (text) => {
     const q = (text || input).trim();
     if (!q || loading) return;
+    
+    // Extract recent history for continuity (limit to last 10 messages)
+    const history = messages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .slice(-10);
+
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: q }]);
     setLoading(true);
     try {
-      const data = await api.chat(q);
+      const data = await api.chat(q, '', history);
       setMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
     } catch (e) {
       setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
@@ -80,7 +87,9 @@ export default function AISidebar({ onAskAI }) {
         ) : messages.map((msg, i) => (
           <div key={i}>
             <div className="chat-role">{msg.role === 'user' ? 'You' : 'AI Chef'}</div>
-            <div className={`chat-bubble ${msg.role}`}>{msg.content}</div>
+            <div className={`chat-bubble ${msg.role}`}>
+              <ReactMarkdown>{msg.content}</ReactMarkdown>
+            </div>
           </div>
         ))}
         {loading && (

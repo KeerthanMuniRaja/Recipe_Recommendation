@@ -146,6 +146,7 @@ class QuickSearchRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., max_length=1000)
     context: Optional[str] = Field(default="")
+    history: Optional[list[dict]] = Field(default=None)
 
 
 # ─────────────────────────────────────────────────────────
@@ -314,7 +315,8 @@ async def chat_interaction(body: ChatRequest) -> dict[str, Any]:
             
         response = await app_state.pipeline._llm.chat(
             system=system_prompt,
-            user=body.message
+            user=body.message,
+            history=body.history
         )
     except Exception as exc:
         logger.exception("Error in chat_interaction")

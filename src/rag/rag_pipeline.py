@@ -82,7 +82,7 @@ class LLMClient:
                 "Set LLM_PROVIDER=openai, anthropic, or groq in .env"
             )
 
-    async def chat(self, system: str, user: str) -> str:
+    async def chat(self, system: str, user: str, history: list[dict] | None = None) -> str:
         """
         Send a chat completion request and return the response text.
 
@@ -90,29 +90,34 @@ class LLMClient:
         ----------
         system : str   system / instruction prompt
         user   : str   user-facing prompt
+        history: list  optional list of prior message dicts
 
         Returns
         -------
         str  – model's text response
         """
         if self.provider in ("openai", "groq"):
+            messages = [{"role": "system", "content": system}]
+            if history:
+                messages.extend(history)
+            messages.append({"role": "user", "content": user})
+
             response = await self._client.chat.completions.create(
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
+                messages=messages,
             )
             return response.choices[0].message.content or ""
 
         # Anthropic
+        user_msgs = history if history else []
+        user_msgs.append({"role": "user", "content": user})
         response = await self._client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
             system=system,
-            messages=[{"role": "user", "content": user}],
+            messages=user_msgs,
         )
         return response.content[0].text or ""
 
