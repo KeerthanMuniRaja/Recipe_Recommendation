@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../services/api';
+import { jsPDF } from 'jspdf';
 
 function buildRecipeText(data, servings) {
   let txt = `# ${data.recipe || 'Recipe'}\n\n`;
@@ -36,12 +37,33 @@ function SubList({ subs, onAskAI }) {
 
 export default function RecipeResult({ data, servings, onAskAI }) {
   const [showRaw, setShowRaw] = useState(false);
+  const [isFavorite, setIsFavorite] = useState(false);
+
+  useEffect(() => {
+    if (!data) return;
+    const favs = JSON.parse(localStorage.getItem('recipeFavorites') || '[]');
+    setIsFavorite(favs.some(f => f.recipe === data.recipe));
+  }, [data]);
+
+  const toggleFavorite = () => {
+    const favs = JSON.parse(localStorage.getItem('recipeFavorites') || '[]');
+    if (isFavorite) {
+      const newFavs = favs.filter(f => f.recipe !== data.recipe);
+      localStorage.setItem('recipeFavorites', JSON.stringify(newFavs));
+      setIsFavorite(false);
+    } else {
+      const newFavs = [{ ...data, servings, savedAt: new Date().toISOString() }, ...favs];
+      localStorage.setItem('recipeFavorites', JSON.stringify(newFavs));
+      setIsFavorite(true);
+    }
+  };
+
   if (!data) return null;
   if (data.error) return <div className="alert alert-error">{data.error}</div>;
 
   const recipeText = buildRecipeText(data, servings);
 
-  const handleDownload = () => {
+  const handleDownloadTXT = () => {
     const blob = new Blob([recipeText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -49,12 +71,49 @@ export default function RecipeResult({ data, servings, onAskAI }) {
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadPDF = () => {
+    const doc = new jsPDF();
+    doc.setFont("helvetica");
+    doc.setFontSize(16);
+    doc.text(data.recipe || 'Recipe', 20, 20);
+    doc.setFontSize(12);
+    doc.text(`Difficulty: ${data.difficulty || 'N/A'} | Time: ${data.estimated_time || 'N/A'} | Serves: ${servings}`, 20, 30);
+    
+    doc.setFontSize(14);
+    doc.text("Instructions:", 20, 45);
+    doc.setFontSize(12);
+    let y = 55;
+    (data.steps || []).forEach((s, i) => {
+      const lines = doc.splitTextToSize(`${i+1}. ${s}`, 170);
+      doc.text(lines, 20, y);
+      y += lines.length * 7;
+      if (y > 280) { doc.addPage(); y = 20; }
+    });
+
+    if (data.tips) {
+      y += 10;
+      if (y > 280) { doc.addPage(); y = 20; }
+      doc.setFontSize(14);
+      doc.text("Chef's Tip:", 20, y);
+      y += 10;
+      doc.setFontSize(12);
+      const lines = doc.splitTextToSize(data.tips, 170);
+      doc.text(lines, 20, y);
+    }
+    
+    doc.save(`${data.recipe || 'recipe'}.pdf`);
+  };
+
   return (
     <div className="card">
       <div className="recipe-header">
         <h2 className="recipe-title">{data.recipe || 'Your Recipe'}</h2>
-        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
-          <button className="download-btn" onClick={handleDownload}>📋 Download</button>
+        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, alignItems: 'center' }}>
+          <button className="btn btn-ghost btn-sm" onClick={toggleFavorite} style={{ color: isFavorite ? 'var(--warning)' : 'inherit' }}>
+            {isFavorite ? '⭐ Saved' : '☆ Save'}
+          </button>
+          <button className="download-btn" onClick={handleDownloadPDF}>📄 PDF</button>
+          <button className="download-btn" onClick={handleDownloadTXT}>📋 TXT</button>
         </div>
       </div>
 

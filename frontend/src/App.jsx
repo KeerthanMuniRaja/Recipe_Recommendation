@@ -3,12 +3,14 @@ import AISidebar from './components/AISidebar';
 import RecommendTab from './components/RecommendTab';
 import QuickSearchTab from './components/QuickSearchTab';
 import SubstitutionsTab from './components/SubstitutionsTab';
+import FavoritesTab from './components/FavoritesTab';
 import './index.css';
 
 const TABS = [
   { id: 'recommend', label: '✨ Recommend Recipe' },
   { id: 'search',    label: '🔍 Quick Search' },
   { id: 'subs',      label: '🔄 Substitutions' },
+  { id: 'favorites', label: '⭐ Favorites & History' },
 ];
 
 export default function App() {
@@ -46,6 +48,7 @@ export default function App() {
         {activeTab === 'recommend' && <RecommendTab onAskAI={handleAskAI} />}
         {activeTab === 'search'    && <QuickSearchTab onAskAI={handleAskAI} />}
         {activeTab === 'subs'      && <SubstitutionsTab onAskAI={handleAskAI} />}
+        {activeTab === 'favorites' && <FavoritesTab onAskAI={handleAskAI} />}
       </div>
 
       {/* ── Fixed AI Sidebar ── */}

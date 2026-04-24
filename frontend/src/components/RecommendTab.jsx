@@ -39,6 +39,13 @@ export default function RecommendTab({ onAskAI }) {
         include_nutrition: nutrition,
       });
       setResult(data);
+      
+      // Save to local storage history
+      const history = JSON.parse(localStorage.getItem('recipeHistory') || '[]');
+      const newEntry = { ...data, timestamp: new Date().toISOString(), servings };
+      const newHistory = [newEntry, ...history].slice(0, 50); // keep last 50
+      localStorage.setItem('recipeHistory', JSON.stringify(newHistory));
+      
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
@@ -110,9 +117,16 @@ export default function RecommendTab({ onAskAI }) {
           </div>
         </div>
         {error && <div className="alert alert-error" style={{ marginBottom: '1rem' }}>{error}</div>}
-        <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>
-          {loading ? '⏳ Generating...' : '🚀 Generate Recommendation'}
-        </button>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading} style={{ flex: 1 }}>
+            {loading ? '⏳ Generating...' : '🚀 Generate Recommendation'}
+          </button>
+          {result && !loading && (
+            <button className="btn btn-ghost" onClick={handleSubmit}>
+              🔄 Regenerate
+            </button>
+          )}
+        </div>
       </div>
 
       {loading && (
