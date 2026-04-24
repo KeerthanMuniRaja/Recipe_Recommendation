@@ -9,6 +9,8 @@ const CALORIES = ['Any','Under 300 kcal','Under 500 kcal','Under 800 kcal','Unde
 
 export default function RecommendTab({ onAskAI }) {
   const [ingredients, setIngredients] = useState('eggs, milk, flour, sugar');
+  const [image, setImage] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
   const [cuisine, setCuisine] = useState('Any');
   const [cookTime, setCookTime] = useState('Any');
   const [difficulty, setDifficulty] = useState('Any');
@@ -54,7 +56,7 @@ export default function RecommendTab({ onAskAI }) {
       ings = [...ings, ...pantry];
     }
     
-    if (!ings.length) { setError('Please enter at least one ingredient.'); return; }
+    if (!ings.length && !image) { setError('Please enter at least one ingredient or upload an image.'); return; }
     setError(''); setLoading(true); setResult(null);
 
     const parts = [];
@@ -71,7 +73,20 @@ export default function RecommendTab({ onAskAI }) {
         context: parts.join(', '),
         top_k: topK,
         include_nutrition: nutrition,
+        image_base64: image || undefined,
       });
+      
+      // If AI detected ingredients from image, auto-fill them for next time
+      if (data.vision_ingredients && data.vision_ingredients.length > 0) {
+        setIngredients(prev => {
+          const combined = [...new Set([...prev.split(',').map(i=>i.trim()), ...data.vision_ingredients])].filter(Boolean);
+          return combined.join(', ');
+        });
+        // Clear image after successful processing so it doesn't get re-sent
+        setImage(null);
+        setImagePreview(null);
+      }
+
       setResult(data);
       
       // Save to local storage history
@@ -91,7 +106,33 @@ export default function RecommendTab({ onAskAI }) {
         <div className="form-grid form-grid-2">
           <div>
             <div className="form-group">
-              <label className="form-label">🧺 Ingredients (comma-separated)</label>
+              <label className="form-label">
+                🧺 Ingredients 
+                <span style={{ float: 'right', fontSize: '0.8rem', fontWeight: 'normal' }}>
+                  <label style={{ cursor: 'pointer', color: 'var(--primary)' }}>
+                    📸 Upload Image
+                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        setImagePreview(event.target.result);
+                        setImage(event.target.result.split(',')[1]);
+                      };
+                      reader.readAsDataURL(file);
+                    }} />
+                  </label>
+                </span>
+              </label>
+              {imagePreview && (
+                <div style={{ marginBottom: '0.5rem', position: 'relative', display: 'inline-block' }}>
+                  <img src={imagePreview} alt="Upload preview" style={{ height: '80px', borderRadius: '4px', border: '1px solid var(--border)' }} />
+                  <button onClick={() => { setImage(null); setImagePreview(null); }} 
+                    style={{ position: 'absolute', top: '-5px', right: '-5px', background: 'var(--error)', color: '#fff', border: 'none', borderRadius: '50%', width: '20px', height: '20px', cursor: 'pointer', fontSize: '10px' }}>
+                    ✕
+                  </button>
+                </div>
+              )}
               <textarea className="form-textarea" value={ingredients} onChange={e => setIngredients(e.target.value)}
                 placeholder="eggs, milk, flour, sugar..." />
             </div>

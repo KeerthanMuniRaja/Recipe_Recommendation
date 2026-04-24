@@ -99,36 +99,16 @@ app.add_middleware(
 # ─────────────────────────────────────────────────────────
 
 class RecommendRequest(BaseModel):
-    ingredients: list[str] = Field(
-        ...,
-        min_length=1,
-        max_length=30,
-        description="List of available ingredients (raw names, quantities optional).",
-        examples=[["eggs", "flour", "butter", "sugar", "milk"]],
-    )
-    top_k: int = Field(
-        default=5,
-        ge=1,
-        le=20,
-        description="Number of recipe candidates to retrieve.",
-    )
-    context: Optional[str] = Field(
-        default="",
-        max_length=200,
-        description="Optional free-text hint (cuisine type, dietary restriction, etc.)",
-        examples=["Italian, low-carb"],
-    )
-    include_nutrition: bool = Field(
-        default=False,
-        description="Include a nutritional estimate in the response.",
-    )
+    ingredients: list[str] = Field(default_factory=list)
+    top_k: int = Field(default=5, ge=1, le=20)
+    context: Optional[str] = Field(default="")
+    include_nutrition: bool = Field(default=False)
+    image_base64: Optional[str] = Field(default=None)
 
     @field_validator("ingredients")
     @classmethod
     def validate_ingredients(cls, v):
         cleaned = [i.strip() for i in v if i.strip()]
-        if not cleaned:
-            raise ValueError("ingredients list must not be empty after stripping whitespace.")
         return cleaned
 
 
@@ -204,26 +184,39 @@ async def store_info() -> dict:
 )
 async def recommend_recipe(body: RecommendRequest) -> dict[str, Any]:
     """
-    **Main endpoint.**
-
-    Accepts a list of available ingredients and returns:
-    - Best matching recipe (LLM-refined)
-    - Step-by-step cooking instructions
-    - Missing ingredients
-    - Ingredient substitutions
-    - All candidate recipes with similarity scores
-    - Optional nutritional estimate
+    Agentic workflow: if an image is provided, extracts ingredients first using LangGraph.
+    Then retrieves candidates and generates a final JSON recipe.
     """
-    if not app_state.pipeline:
-        raise HTTPException(status_code=503, detail="Pipeline not initialised.")
+    from src.agent.recipe_graph import recipe_agent
+    
+    # Must have either ingredients or image
+    if not body.ingredients and not body.image_base64:
+        raise HTTPException(status_code=400, detail="Must provide ingredients or an image_base64.")
 
     try:
-        result = await app_state.pipeline.run(
-            ingredients=body.ingredients,
-            top_k=body.top_k,
-            context=body.context or "",
-            include_nutrition=body.include_nutrition,
-        )
+        initial_state = {
+            "image_base64": body.image_base64,
+            "ingredients": body.ingredients,
+            "context": body.context or "",
+            "top_k": body.top_k,
+            "include_nutrition": body.include_nutrition,
+            "vision_extracted_ingredients": [],
+            "retrieved_candidates": [],
+            "final_recipe": {},
+            "error": None
+        }
+        
+        result = await recipe_agent.ainvoke(initial_state)
+        
+        if result.get("error"):
+            raise HTTPException(status_code=500, detail=result["error"])
+            
+        final = result["final_recipe"]
+        if result.get("vision_extracted_ingredients"):
+            final["vision_ingredients"] = result["vision_extracted_ingredients"]
+            
+        return final
+
     except Exception as exc:
         logger.exception("Error in recommend_recipe")
         raise HTTPException(
@@ -231,7 +224,6 @@ async def recommend_recipe(body: RecommendRequest) -> dict[str, Any]:
             detail=f"Pipeline error: {str(exc)}",
         ) from exc
 
-    return result
 
 
 @app.post(
