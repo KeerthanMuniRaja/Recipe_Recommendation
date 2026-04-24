@@ -51,7 +51,7 @@ with chat_col:
     
     # Chat History
     msg_count = len(st.session_state.messages)
-    container_height = min(700, max(50, msg_count * 100))
+    container_height = max(500, max(50, msg_count * 100))
     chat_container = st.container(height=container_height, border=False)
     with chat_container:
         for msg in st.session_state.messages:
