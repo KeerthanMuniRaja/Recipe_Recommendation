@@ -41,7 +41,9 @@ with chat_col:
     st.divider()
     
     # Chat History
-    chat_container = st.container(border=False)
+    msg_count = len(st.session_state.messages)
+    container_height = min(700, max(50, msg_count * 100))
+    chat_container = st.container(height=container_height, border=False)
     with chat_container:
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
