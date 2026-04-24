@@ -141,6 +141,11 @@ class QuickSearchRequest(BaseModel):
     context: Optional[str] = Field(default="")
 
 
+class ChatRequest(BaseModel):
+    message: str = Field(..., max_length=1000)
+    context: Optional[str] = Field(default="")
+
+
 # ─────────────────────────────────────────────────────────
 # Middleware: request timing
 # ─────────────────────────────────────────────────────────
@@ -283,6 +288,37 @@ async def quick_search(body: QuickSearchRequest) -> dict[str, Any]:
         "total_found": len(candidates),
         "recipes": [c.to_dict() for c in candidates],
     }
+
+
+@app.post(
+    "/api/v1/chat",
+    tags=["Chat"],
+    summary="Interactive AI Chat",
+)
+async def chat_interaction(body: ChatRequest) -> dict[str, Any]:
+    """
+    Answers free-form questions from the user using the configured LLM.
+    """
+    if not app_state.pipeline:
+        raise HTTPException(status_code=503, detail="Pipeline not initialised.")
+    
+    try:
+        system_prompt = (
+            "You are a helpful culinary AI assistant. "
+            "Answer the user's question concisely. "
+        )
+        if body.context:
+            system_prompt += f"\nContext provided by the user's current view:\n{body.context}"
+            
+        response = await app_state.pipeline._llm.chat(
+            system=system_prompt,
+            user=body.message
+        )
+    except Exception as exc:
+        logger.exception("Error in chat_interaction")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        
+    return {"reply": response}
 
 
 # ─────────────────────────────────────────────────────────

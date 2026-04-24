@@ -73,10 +73,13 @@ class LLMClient:
         elif self.provider == "anthropic":
             import anthropic  # lazy import
             self._client = anthropic.AsyncAnthropic(api_key=settings.llm.api_key)
+        elif self.provider == "groq":
+            from groq import AsyncGroq  # lazy import
+            self._client = AsyncGroq(api_key=settings.llm.api_key)
         else:
             raise ValueError(
                 f"Unsupported LLM provider: '{self.provider}'. "
-                "Set LLM_PROVIDER=openai or LLM_PROVIDER=anthropic in .env"
+                "Set LLM_PROVIDER=openai, anthropic, or groq in .env"
             )
 
     async def chat(self, system: str, user: str) -> str:
@@ -92,7 +95,7 @@ class LLMClient:
         -------
         str  – model's text response
         """
-        if self.provider == "openai":
+        if self.provider in ("openai", "groq"):
             response = await self._client.chat.completions.create(
                 model=self.model,
                 temperature=self.temperature,

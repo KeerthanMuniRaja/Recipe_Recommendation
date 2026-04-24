@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 # ── Load .env from project root ──────────────────────────
 BASE_DIR = Path(__file__).resolve().parents[2]
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True)
 
 
 # ─────────────────────────────────────────────────────────
@@ -73,9 +73,16 @@ class RetrievalConfig:
 # ─────────────────────────────────────────────────────────
 @dataclass
 class LLMConfig:
-    provider: str = os.getenv("LLM_PROVIDER", "openai")   # "openai" | "anthropic"
+    provider: str = os.getenv("LLM_PROVIDER", "openai")   # "openai" | "anthropic" | "groq"
     model_name: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
-    api_key: str = os.getenv("OPENAI_API_KEY", "")
+    
+    @property
+    def api_key(self) -> str:
+        if self.provider == "anthropic":
+            return os.getenv("ANTHROPIC_API_KEY", "")
+        elif self.provider == "groq":
+            return os.getenv("GROQ_API_KEY", "")
+        return os.getenv("OPENAI_API_KEY", "")
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
     # How many retrieved recipes to include in the RAG context

@@ -9,8 +9,8 @@ Features
 • Load an existing index + metadata from disk.
 • Perform top-k similarity search.
 • Supports two index types:
-    "flat"  – IndexFlatIP (exact inner-product / cosine, small datasets)
-    "ivf"   – IndexIVFFlat (approximate, faster for >100k recipes)
+    "flat"  - IndexFlatIP (exact inner-product / cosine, small datasets)
+    "ivf"   - IndexIVFFlat (approximate, faster for >100k recipes)
 
 Usage
 ─────

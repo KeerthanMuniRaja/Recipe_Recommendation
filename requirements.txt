@@ -1,5 +1,5 @@
-# ─────────────────────────────────────────────https://in.linkedin.com/in/manojkumar-t-032035268?trk=public_profile_browsemap
-# Recipe GenAI System – Flexible (Python 3.13)
+# ─────────────────────────────────────────────
+# Recipe GenAI System 
 # ─────────────────────────────────────────────
 
 # Core ML / Embeddings
@@ -13,6 +13,7 @@ pyarrow
 
 # LLM / RAG
 openai
+groq
 langchain
 langchain-openai
 langchain-community

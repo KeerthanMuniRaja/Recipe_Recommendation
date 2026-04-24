@@ -191,9 +191,9 @@ def load_dataset(source: str = "auto") -> pd.DataFrame:
     Parameters
     ----------
     source : str
-        "foodcom"  – force Food.com loader
-        "recipe1m" – force Recipe1M loader
-        "auto"     – tries Food.com first, then Recipe1M
+        "foodcom"  - force Food.com loader
+        "recipe1m" - force Recipe1M loader
+        "auto"     - tries Food.com first, then Recipe1M
 
     Returns
     -------
