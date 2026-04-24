@@ -2,10 +2,19 @@
 # Recipe GenAI System — Dockerfile
 # ─────────────────────────────────────────────────────────
 # Multi-stage build:
-#   stage 1 (builder) – install Python deps
-#   stage 2 (runtime) – lean production image
+#   stage 1 (frontend) – build React app
+#   stage 2 (builder)  – install Python deps
+#   stage 3 (runtime)  – lean production image
 
-# ── Stage 1: Builder ──────────────────────────────────────
+# ── Stage 1: Frontend Builder ─────────────────────────────
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm install
+COPY frontend/ .
+RUN npm run build
+
+# ── Stage 2: Backend Builder ──────────────────────────────
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
@@ -21,7 +30,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# ── Stage 2: Runtime ──────────────────────────────────────
+# ── Stage 3: Runtime ──────────────────────────────────────
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -39,6 +48,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY src/ ./src/
 COPY data/ ./data/
 COPY models/ ./models/
+
+# Copy frontend build
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # Pre-download NLTK data (if used)
 RUN python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('stopwords', quiet=True)" || true

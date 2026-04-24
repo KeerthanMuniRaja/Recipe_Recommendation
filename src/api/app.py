@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from loguru import logger
 
@@ -333,6 +335,39 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "An unexpected error occurred.", "path": str(request.url.path)},
     )
 
+
+# ─────────────────────────────────────────────────────────
+# Serve React Frontend
+# ─────────────────────────────────────────────────────────
+
+frontend_dist = Path("frontend/dist")
+
+if frontend_dist.is_dir():
+    # Serve static assets (js, css, images) from the assets folder
+    assets_dir = frontend_dist / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        
+    # Serve other static files at the root (favicon.svg, etc)
+    for file in frontend_dist.iterdir():
+        if file.is_file():
+            @app.get(f"/{file.name}", tags=["Frontend"])
+            async def serve_file(request: Request, f_path=file):
+                return FileResponse(f_path)
+
+    # Catch-all route for SPA routing (must be last!)
+    @app.get("/{full_path:path}", tags=["Frontend"])
+    async def serve_spa(request: Request, full_path: str):
+        # Exclude API routes just in case
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found")
+            
+        index_file = frontend_dist / "index.html"
+        if index_file.is_file():
+            return FileResponse(index_file)
+        raise HTTPException(status_code=404, detail="Frontend build not found")
+else:
+    logger.warning("Frontend dist directory not found. React app will not be served.")
 
 # ─────────────────────────────────────────────────────────
 # CLI entry-point

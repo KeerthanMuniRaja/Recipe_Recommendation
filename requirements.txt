@@ -44,7 +44,8 @@ httpx
 requests
 
 # UI
-streamlit
+# Frontend is now React (see frontend/ directory)
+# Run: cd frontend && npm run dev
 
 # Testing
 pytest
