@@ -8,8 +8,17 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🍳 Recipe GenAI System")
-st.markdown("Discover personalized recipes, quick searches, and smart substitutions.")
+st.markdown("""
+<style>
+/* Make the right AI column sticky so it stays on screen while scrolling the main page */
+div[data-testid="stHorizontalBlock"]:first-of-type > div:nth-child(2) {
+    position: sticky !important;
+    top: 4rem !important;
+    align-self: flex-start !important;
+    z-index: 100 !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # --- Session State Init ---
 if "messages" not in st.session_state:
@@ -55,6 +64,9 @@ with chat_col:
         st.rerun()
 
 with main_col:
+    st.title("🍳 Recipe GenAI System")
+    st.markdown("Discover personalized recipes, quick searches, and smart substitutions.")
+    
     # --- Main Tabs ---
     tab1, tab2, tab3 = st.tabs(["✨ Recommend Recipe", "🔍 Quick Search", "🔄 Substitutions"])
     
