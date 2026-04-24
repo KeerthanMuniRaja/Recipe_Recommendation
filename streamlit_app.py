@@ -45,7 +45,14 @@ def ask_ai(query: str, context: str = ""):
 main_col, chat_col = st.columns([3, 1], gap="large")
 
 with chat_col:
-    st.header("🤖 AI Assistant")
+    h1, h2 = st.columns([3, 1])
+    with h1:
+        st.header("🤖 AI Assistant")
+    with h2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🗑️ Clear", help="Clear chat history"):
+            st.session_state.messages = []
+            st.rerun()
     st.markdown("Ask any culinary questions or tap **Ask AI** on recipes!")
     st.divider()
     
@@ -89,6 +96,9 @@ with main_col:
             context_hint = st.text_input("Dietary Hint (Optional)", placeholder="E.g., breakfast, vegan, gluten-free")
         
         with col2:
+            serving_size = st.slider("🍽️ Serving Size", min_value=1, max_value=10, value=2, help="Number of people to serve")
+            cook_time = st.selectbox("⏱️ Max Cook Time", ["Any", "Under 15 mins", "Under 30 mins", "Under 45 mins", "Under 1 hour"], index=0)
+            difficulty = st.selectbox("⭐ Difficulty", ["Any", "Easy", "Medium", "Hard"], index=0)
             top_k = st.number_input("Candidates to consider", min_value=1, max_value=20, value=5)
             include_nutrition = st.checkbox("Include Nutrition Estimate", value=False)
             st.markdown("<br>", unsafe_allow_html=True)
@@ -99,10 +109,15 @@ with main_col:
             if not ingredients:
                 st.warning("Please enter some ingredients.")
             else:
-                # Build combined context: cuisine + dietary hint
+                # Build combined context from all filters
                 context_parts = []
                 if cuisine_type != "Any":
                     context_parts.append(f"{cuisine_type} cuisine")
+                if difficulty != "Any":
+                    context_parts.append(f"{difficulty} difficulty")
+                if cook_time != "Any":
+                    context_parts.append(cook_time.lower())
+                context_parts.append(f"serves {serving_size} people")
                 if context_hint.strip():
                     context_parts.append(context_hint.strip())
                 combined_context = ", ".join(context_parts)
@@ -126,7 +141,20 @@ with main_col:
             if "error" in data:
                 st.error(data["error"])
             else:
-                st.subheader(data.get("recipe", "Your Custom Recipe"))
+                rc1, rc2 = st.columns([5, 1])
+                with rc1:
+                    st.subheader(data.get("recipe", "Your Custom Recipe"))
+                with rc2:
+                    # Build full recipe text for copying
+                    recipe_text = f"# {data.get('recipe', 'Recipe')}\n\n"
+                    recipe_text += f"Difficulty: {data.get('difficulty', 'N/A')} | Time: {data.get('estimated_time', 'N/A')} | Serves: {serving_size}\n\n"
+                    recipe_text += "## Instructions\n"
+                    for s in data.get("steps", []):
+                        recipe_text += f"{s}\n"
+                    if data.get("tips"):
+                        recipe_text += f"\n## Chef's Tip\n{data.get('tips')}\n"
+                    st.download_button("📋 Copy", data=recipe_text, file_name="recipe.txt", mime="text/plain", help="Download recipe as text file")
+
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Match Score", f"{int(data.get('score', 0) * 100)}%")
                 c2.metric("Difficulty", data.get("difficulty", "N/A"))
@@ -172,10 +200,12 @@ with main_col:
         st.header("Quick Search")
         st.markdown("Fast vector-based search to find recipes in the database without LLM generation.")
         
-        col1, col2 = st.columns([3, 1])
-        with col1:
+        qs_col1, qs_col2, qs_col3 = st.columns([3, 1, 1])
+        with qs_col1:
             q_ings_str = st.text_input("Quick Search Ingredients (comma-separated)", "chicken, rice")
-        with col2:
+        with qs_col2:
+            qs_top_k = st.slider("Results", min_value=1, max_value=15, value=5, help="Number of recipes to return")
+        with qs_col3:
             st.markdown("<br>", unsafe_allow_html=True)
             btn_qs = st.button("Search", use_container_width=True, type="primary")
     
@@ -185,7 +215,7 @@ with main_col:
                 try:
                     res = requests.post(f"{api_base}/api/v1/search/quick", json={
                         "ingredients": q_ings,
-                        "top_k": 5,
+                        "top_k": qs_top_k,
                         "context": ""
                     })
                     res.raise_for_status()
