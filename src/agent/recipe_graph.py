@@ -32,19 +32,40 @@ async def extract_vision_node(state: RecipeState) -> RecipeState:
     provider = settings.llm.provider
     if provider == "groq":
         from langchain_groq import ChatGroq
-        vision_llm = ChatGroq(model="llama-3.2-11b-vision-preview", api_key=settings.llm.api_key)
+        # Vision requires a specific model – different from the text model
+        vision_llm = ChatGroq(
+            model="llama-3.2-11b-vision-preview",
+            api_key=settings.llm.api_key,
+            max_tokens=512,
+        )
     elif provider == "openai":
         from langchain_openai import ChatOpenAI
-        vision_llm = ChatOpenAI(model="gpt-4o-mini", api_key=settings.llm.api_key)
+        vision_llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            api_key=settings.llm.api_key,
+            max_tokens=512,
+        )
     else:
         return {"error": f"Vision not supported for provider: {provider}"}
 
+    # Support JPEG, PNG, WEBP — default to jpeg if unknown
+    image_b64 = state["image_base64"]
+    mime = "image/jpeg"
+    if image_b64.startswith("iVBOR"):   # PNG magic bytes in base64
+        mime = "image/png"
+    elif image_b64.startswith("UklGR"): # WEBP
+        mime = "image/webp"
+
     msg = HumanMessage(
         content=[
-            {"type": "text", "text": "List the raw food ingredients visible in this image. Return ONLY a comma-separated list of ingredients, nothing else."},
+            {"type": "text", "text": (
+                "Look at this image and list ALL visible raw food ingredients. "
+                "Return ONLY a comma-separated list of ingredient names (e.g. tomato, onion, garlic). "
+                "No sentences, no explanations, just the comma-separated list."
+            )},
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{state['image_base64']}"},
+                "image_url": {"url": f"data:{mime};base64,{image_b64}"},
             },
         ]
     )
@@ -52,6 +73,9 @@ async def extract_vision_node(state: RecipeState) -> RecipeState:
     try:
         response = await vision_llm.ainvoke([msg])
         text = response.content.strip()
+        # Clean up: remove any leading labels the model may add
+        if ":" in text and text.index(":") < 30:
+            text = text.split(":", 1)[1].strip()
         found = [i.strip().lower() for i in text.split(',') if i.strip()]
         return {"vision_extracted_ingredients": found}
     except Exception as e:
@@ -88,10 +112,14 @@ async def generate_node(state: RecipeState) -> RecipeState:
     context_block = format_recipe_context(context_recipes)
     
     all_ings = state.get("ingredients", []) + state.get("vision_extracted_ingredients", [])
+    context_hint = state.get("context", "")
+    ingredients_str = ", ".join(all_ings)
+    if context_hint:
+        ingredients_str += f" (preferences: {context_hint})"
     
     user_prompt = RAG_USER_PROMPT.format(
-        ingredients=", ".join(all_ings),
-        context=state.get("context", ""),
+        user_ingredients=ingredients_str,
+        n_recipes=len(context_recipes),
         recipes_context=context_block
     )
     
