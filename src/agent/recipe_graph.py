@@ -30,21 +30,27 @@ async def extract_vision_node(state: RecipeState) -> RecipeState:
         return {"vision_extracted_ingredients": []}
 
     provider = settings.llm.provider
-    if provider == "groq":
-        from langchain_groq import ChatGroq
-        # Vision requires a specific model – different from the text model
-        vision_llm = ChatGroq(
-            model="llama-3.2-11b-vision-preview",
-            api_key=settings.llm.api_key,
-            max_tokens=512,
+    import os
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+
+    if gemini_key:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        vision_llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            api_key=gemini_key,
+            max_output_tokens=512,
         )
-    elif provider == "openai":
-        from langchain_openai import ChatOpenAI
-        vision_llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            api_key=settings.llm.api_key,
-            max_tokens=512,
-        )
+    elif provider == "groq" or provider == "openai":
+        if openai_key:
+            from langchain_openai import ChatOpenAI
+            vision_llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                api_key=openai_key,
+                max_tokens=512,
+            )
+        else:
+            return {"error": "No valid vision API key found. Please add GEMINI_API_KEY or OPENAI_API_KEY to .env"}
     else:
         return {"error": f"Vision not supported for provider: {provider}"}
 
