@@ -117,6 +117,34 @@ export default function RecipeResult({ data, servings, onAskAI }) {
         </div>
       </div>
 
+      {/* AI Vision Detected Ingredients */}
+      {data.vision_ingredients && data.vision_ingredients.length > 0 && (
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(99,102,241,0.10), rgba(16,185,129,0.07))',
+          border: '1px solid rgba(99,102,241,0.25)',
+          borderRadius: '10px',
+          padding: '0.75rem 1rem',
+          marginBottom: '1rem',
+        }}>
+          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--primary)', marginBottom: '0.4rem' }}>
+            🤖 Ingredients detected from your image:
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+            {data.vision_ingredients.map(ing => (
+              <span key={ing} style={{
+                background: 'rgba(99,102,241,0.13)',
+                border: '1px solid rgba(99,102,241,0.3)',
+                color: 'var(--primary)',
+                borderRadius: '20px',
+                padding: '0.15rem 0.65rem',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+              }}>✅ {ing}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="metrics-row">
         <div className="metric-card">
           <div className="metric-label">Match Score</div>

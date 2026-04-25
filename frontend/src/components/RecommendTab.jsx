@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import RecipeResult from './RecipeResult';
 
@@ -8,9 +8,12 @@ const DIFFICULTIES = ['Any','Easy','Medium','Hard'];
 const CALORIES = ['Any','Under 300 kcal','Under 500 kcal','Under 800 kcal','Under 1000 kcal'];
 
 export default function RecommendTab({ onAskAI }) {
+  const [mode, setMode] = useState('text'); // 'text' | 'image'
   const [ingredients, setIngredients] = useState('eggs, milk, flour, sugar');
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [detectedIngredients, setDetectedIngredients] = useState([]);
   const [cuisine, setCuisine] = useState('Any');
   const [cookTime, setCookTime] = useState('Any');
   const [difficulty, setDifficulty] = useState('Any');
@@ -19,7 +22,7 @@ export default function RecommendTab({ onAskAI }) {
   const [dietHint, setDietHint] = useState('');
   const [maxCalories, setMaxCalories] = useState('Any');
   const [nutrition, setNutrition] = useState(false);
-  
+
   // Pantry
   const [pantry, setPantry] = useState([]);
   const [newPantryItem, setNewPantryItem] = useState('');
@@ -28,11 +31,44 @@ export default function RecommendTab({ onAskAI }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     const p = JSON.parse(localStorage.getItem('recipePantry') || '["salt", "pepper", "olive oil"]');
     setPantry(p);
   }, []);
+
+  const processFile = (file) => {
+    if (!file || !file.type.startsWith('image/')) {
+      setError('Please upload a valid image file.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setImagePreview(event.target.result);
+      setImage(event.target.result.split(',')[1]);
+      setDetectedIngredients([]);
+      setResult(null);
+      setError('');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleFileChange = (e) => processFile(e.target.files[0]);
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    processFile(e.dataTransfer.files[0]);
+  };
+
+  const clearImage = () => {
+    setImage(null);
+    setImagePreview(null);
+    setDetectedIngredients([]);
+    setResult(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const addPantry = () => {
     const val = newPantryItem.trim();
@@ -51,13 +87,20 @@ export default function RecommendTab({ onAskAI }) {
   };
 
   const handleSubmit = async () => {
-    let ings = ingredients.split(',').map(s => s.trim()).filter(Boolean);
-    if (usePantry && pantry.length > 0) {
-      ings = [...ings, ...pantry];
+    let ings = mode === 'text'
+      ? ingredients.split(',').map(s => s.trim()).filter(Boolean)
+      : [];
+
+    if (usePantry && pantry.length > 0) ings = [...ings, ...pantry];
+
+    if (!ings.length && !image) {
+      setError(mode === 'image'
+        ? 'Please upload an ingredient image first.'
+        : 'Please enter at least one ingredient or upload an image.');
+      return;
     }
-    
-    if (!ings.length && !image) { setError('Please enter at least one ingredient or upload an image.'); return; }
-    setError(''); setLoading(true); setResult(null);
+
+    setError(''); setLoading(true); setResult(null); setDetectedIngredients([]);
 
     const parts = [];
     if (cuisine !== 'Any') parts.push(`${cuisine} cuisine`);
@@ -75,67 +118,155 @@ export default function RecommendTab({ onAskAI }) {
         include_nutrition: nutrition,
         image_base64: image || undefined,
       });
-      
-      // If AI detected ingredients from image, auto-fill them for next time
+
+      // Show detected ingredients from image
       if (data.vision_ingredients && data.vision_ingredients.length > 0) {
-        setIngredients(prev => {
-          const combined = [...new Set([...prev.split(',').map(i=>i.trim()), ...data.vision_ingredients])].filter(Boolean);
-          return combined.join(', ');
-        });
-        // Clear image after successful processing so it doesn't get re-sent
+        setDetectedIngredients(data.vision_ingredients);
+        if (mode === 'text') {
+          setIngredients(prev => {
+            const combined = [...new Set([...prev.split(',').map(i => i.trim()), ...data.vision_ingredients])].filter(Boolean);
+            return combined.join(', ');
+          });
+        }
+        // Clear image after successful processing
         setImage(null);
         setImagePreview(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
       }
 
       setResult(data);
-      
+
       // Save to local storage history
       const history = JSON.parse(localStorage.getItem('recipeHistory') || '[]');
       const newEntry = { ...data, timestamp: new Date().toISOString(), servings };
-      const newHistory = [newEntry, ...history].slice(0, 50); // keep last 50
-      localStorage.setItem('recipeHistory', JSON.stringify(newHistory));
-      
+      localStorage.setItem('recipeHistory', JSON.stringify([newEntry, ...history].slice(0, 50)));
+
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   };
 
   return (
     <div>
+      {/* ── Mode Toggle ─────────────────────────────────── */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
+        <button
+          className={`btn ${mode === 'text' ? 'btn-primary' : 'btn-ghost'}`}
+          style={{ flex: 1, fontSize: '0.9rem' }}
+          onClick={() => { setMode('text'); clearImage(); }}
+        >
+          ✏️ Type Ingredients
+        </button>
+        <button
+          className={`btn ${mode === 'image' ? 'btn-primary' : 'btn-ghost'}`}
+          style={{ flex: 1, fontSize: '0.9rem' }}
+          onClick={() => { setMode('image'); setResult(null); setDetectedIngredients([]); }}
+        >
+          📸 Scan Ingredient Image
+        </button>
+      </div>
+
       <div className="card">
         <h2 className="section-title">✨ Personalized Recommendation</h2>
         <div className="form-grid form-grid-2">
           <div>
-            <div className="form-group">
-              <label className="form-label">
-                🧺 Ingredients 
-                <span style={{ float: 'right', fontSize: '0.8rem', fontWeight: 'normal' }}>
-                  <label style={{ cursor: 'pointer', color: 'var(--primary)' }}>
-                    📸 Upload Image
-                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
-                      const file = e.target.files[0];
-                      if (!file) return;
-                      const reader = new FileReader();
-                      reader.onload = (event) => {
-                        setImagePreview(event.target.result);
-                        setImage(event.target.result.split(',')[1]);
-                      };
-                      reader.readAsDataURL(file);
-                    }} />
-                  </label>
-                </span>
-              </label>
-              {imagePreview && (
-                <div style={{ marginBottom: '0.5rem', position: 'relative', display: 'inline-block' }}>
-                  <img src={imagePreview} alt="Upload preview" style={{ height: '80px', borderRadius: '4px', border: '1px solid var(--border)' }} />
-                  <button onClick={() => { setImage(null); setImagePreview(null); }} 
-                    style={{ position: 'absolute', top: '-5px', right: '-5px', background: 'var(--error)', color: '#fff', border: 'none', borderRadius: '50%', width: '20px', height: '20px', cursor: 'pointer', fontSize: '10px' }}>
-                    ✕
-                  </button>
+
+            {/* ── IMAGE MODE ──────────────────────────────── */}
+            {mode === 'image' && (
+              <div className="form-group">
+                <label className="form-label">📸 Upload Ingredient Photo</label>
+                <div
+                  onClick={() => !imagePreview && fileInputRef.current?.click()}
+                  onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={handleDrop}
+                  style={{
+                    border: `2px dashed ${isDragging ? 'var(--primary)' : imagePreview ? 'var(--success, #22c55e)' : 'var(--border)'}`,
+                    borderRadius: '12px',
+                    padding: imagePreview ? '0.75rem' : '2.5rem 1rem',
+                    textAlign: 'center',
+                    cursor: imagePreview ? 'default' : 'pointer',
+                    background: isDragging ? 'rgba(99,102,241,0.07)' : 'var(--surface)',
+                    transition: 'all 0.2s ease',
+                    minHeight: '160px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.5rem',
+                    position: 'relative',
+                  }}
+                >
+                  {imagePreview ? (
+                    <>
+                      <img
+                        src={imagePreview}
+                        alt="Ingredient preview"
+                        style={{ maxHeight: '160px', maxWidth: '100%', borderRadius: '8px', objectFit: 'contain' }}
+                      />
+                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                        <button className="btn btn-ghost btn-sm" onClick={() => fileInputRef.current?.click()}>
+                          🔄 Change
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          style={{ background: 'var(--error, #ef4444)', color: '#fff', border: 'none' }}
+                          onClick={(e) => { e.stopPropagation(); clearImage(); }}
+                        >
+                          🗑️ Remove
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: '2.5rem' }}>🥦</div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Drag & drop or click to upload
+                      </div>
+                      <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                        Upload a photo of ingredients — AI will identify them and suggest recipes
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                        Supports JPG, PNG, WEBP
+                      </div>
+                    </>
+                  )}
                 </div>
-              )}
-              <textarea className="form-textarea" value={ingredients} onChange={e => setIngredients(e.target.value)}
-                placeholder="eggs, milk, flour, sugar..." />
-            </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={handleFileChange}
+                />
+
+                {/* Optional extra ingredients alongside image */}
+                <div style={{ marginTop: '0.75rem' }}>
+                  <label className="form-label" style={{ fontSize: '0.82rem' }}>
+                    ➕ Add extra ingredients (optional, combined with image scan)
+                  </label>
+                  <input
+                    className="form-input"
+                    value={ingredients}
+                    onChange={e => setIngredients(e.target.value)}
+                    placeholder="e.g. salt, pepper, olive oil..."
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* ── TEXT MODE ───────────────────────────────── */}
+            {mode === 'text' && (
+              <div className="form-group">
+                <label className="form-label">🧺 Ingredients</label>
+                <textarea
+                  className="form-textarea"
+                  value={ingredients}
+                  onChange={e => setIngredients(e.target.value)}
+                  placeholder="eggs, milk, flour, sugar..."
+                />
+              </div>
+            )}
+
             <div className="form-group">
               <label className="form-label">🌍 Cuisine Type</label>
               <select className="form-select" value={cuisine} onChange={e => setCuisine(e.target.value)}>
@@ -147,7 +278,7 @@ export default function RecommendTab({ onAskAI }) {
               <input className="form-input" value={dietHint} onChange={e => setDietHint(e.target.value)}
                 placeholder="e.g. vegan, low-carb, breakfast..." />
             </div>
-            
+
             <div className="form-group" style={{ marginTop: '2rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                 <label className="form-label" style={{ margin: 0 }}>🧺 My Pantry Inventory</label>
@@ -175,6 +306,7 @@ export default function RecommendTab({ onAskAI }) {
               </div>
             </div>
           </div>
+
           <div>
             <div className="form-group">
               <label className="form-label">🍽️ Serving Size</label>
@@ -224,23 +356,58 @@ export default function RecommendTab({ onAskAI }) {
             </div>
           </div>
         </div>
+
         {error && <div className="alert alert-error" style={{ marginBottom: '1rem' }}>{error}</div>}
+
         <div style={{ display: 'flex', gap: '1rem' }}>
           <button className="btn btn-primary" onClick={handleSubmit} disabled={loading} style={{ flex: 1 }}>
-            {loading ? '⏳ Generating...' : '🚀 Generate Recommendation'}
+            {loading
+              ? (mode === 'image' ? '🔍 Scanning image & finding recipes...' : '⏳ Generating...')
+              : (mode === 'image' ? '🔍 Scan Image & Get Recipes' : '🚀 Generate Recommendation')}
           </button>
           {result && !loading && (
-            <button className="btn btn-ghost" onClick={handleSubmit}>
-              🔄 Regenerate
-            </button>
+            <button className="btn btn-ghost" onClick={handleSubmit}>🔄 Regenerate</button>
           )}
         </div>
       </div>
 
+      {/* ── Loading ─────────────────────────────────────── */}
       {loading && (
         <div className="spinner-wrap">
           <div className="spinner" />
-          <span>Finding the best {cuisine !== 'Any' ? cuisine + ' ' : ''}recipe for you...</span>
+          <span>
+            {mode === 'image'
+              ? '🔍 AI is scanning your image for ingredients...'
+              : `Finding the best ${cuisine !== 'Any' ? cuisine + ' ' : ''}recipe for you...`}
+          </span>
+        </div>
+      )}
+
+      {/* ── Detected Ingredients Banner ─────────────────── */}
+      {detectedIngredients.length > 0 && !loading && (
+        <div className="card" style={{
+          background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(16,185,129,0.08))',
+          border: '1px solid rgba(99,102,241,0.3)',
+          marginTop: '1rem',
+        }}>
+          <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: 'var(--primary)' }}>
+            🤖 AI Detected Ingredients from Your Image
+          </h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+            {detectedIngredients.map(ing => (
+              <span key={ing} className="ingredient-tag" style={{
+                background: 'rgba(99,102,241,0.15)',
+                border: '1px solid rgba(99,102,241,0.4)',
+                color: 'var(--primary)',
+                fontWeight: 600,
+              }}>
+                ✅ {ing}
+              </span>
+            ))}
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.5rem', marginBottom: 0 }}>
+            These ingredients were automatically detected from your image and used to find the best recipe.
+          </p>
         </div>
       )}
 
