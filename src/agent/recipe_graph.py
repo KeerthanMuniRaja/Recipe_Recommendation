@@ -133,6 +133,7 @@ async def generate_node(state: RecipeState) -> RecipeState:
     try:
         response_text = await llm.chat(SYSTEM_PROMPT, user_prompt)
         final_json = _parse_json_response(response_text)
+        final_json["score"] = candidates[0].combined_score
         final_json["all_candidates"] = [c.to_dict() for c in candidates]
         final_json["vision_ingredients"] = state.get("vision_extracted_ingredients", [])
         return {"final_recipe": final_json}
