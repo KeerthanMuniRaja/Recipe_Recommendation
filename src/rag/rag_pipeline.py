@@ -1,35 +1,4 @@
-"""
-src/rag/rag_pipeline.py
-────────────────────────────────────────────────────────
-RAG (Retrieval-Augmented Generation) pipeline.
-
-Flow
-────
-  user ingredients
-        │
-        ▼
-  RecipeRetriever.retrieve()    ← FAISS similarity search
-        │
-        ▼
-  format_recipe_context()       ← build LLM context block
-        │
-        ▼
-  LLM (OpenAI / Anthropic)      ← generate final answer
-        │
-        ▼
-  JSON response                 ← recipe, steps, substitutions …
-
-Usage
-─────
-    from src.rag.rag_pipeline import RAGPipeline
-
-    pipeline = RAGPipeline()
-    result = await pipeline.run(
-        ingredients=["eggs", "flour", "butter"],
-        top_k=5,
-        context="birthday cake"
-    )
-"""
+"""RAG pipeline: retrieve relevant recipes then generate a response with an LLM."""
 
 from __future__ import annotations
 
@@ -51,15 +20,8 @@ from src.preprocessing.ingredient_parser import get_substitutions
 from src.utils.config import settings
 
 
-# ─────────────────────────────────────────────────────────
-# LLM Client abstraction
-# ─────────────────────────────────────────────────────────
-
 class LLMClient:
-    """
-    Thin wrapper that supports OpenAI and Anthropic models.
-    The provider is chosen by settings.llm.provider.
-    """
+    """Thin wrapper that supports OpenAI, Anthropic, and Groq models."""
 
     def __init__(self) -> None:
         self.provider = settings.llm.provider
@@ -83,19 +45,7 @@ class LLMClient:
             )
 
     async def chat(self, system: str, user: str, history: list[dict] | None = None) -> str:
-        """
-        Send a chat completion request and return the response text.
-
-        Parameters
-        ----------
-        system : str   system / instruction prompt
-        user   : str   user-facing prompt
-        history: list  optional list of prior message dicts
-
-        Returns
-        -------
-        str  – model's text response
-        """
+        """Send a chat completion request and return the response text."""
         if self.provider in ("openai", "groq"):
             messages = [{"role": "system", "content": system}]
             if history:
@@ -122,28 +72,15 @@ class LLMClient:
         return response.content[0].text or ""
 
 
-# ─────────────────────────────────────────────────────────
-# JSON parsing helper
-# ─────────────────────────────────────────────────────────
-
 def _parse_json_response(raw: str) -> dict:
-    """
-    Extract JSON from an LLM response that may include prose or fences.
-
-    Attempts:
-    1. Direct parse
-    2. Extract first {...} block
-    3. Strip ```json fences and retry
-    """
+    """Extract JSON from an LLM response that may include prose or markdown fences."""
     text = raw.strip()
 
-    # Attempt 1 – direct parse
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Attempt 2 – extract first JSON block
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
         try:
@@ -151,31 +88,18 @@ def _parse_json_response(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Attempt 3 – strip fences
     cleaned = re.sub(r"```(?:json)?", "", text).strip()
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
 
-    # Fallback – return raw text wrapped in a dict
     logger.warning("Could not parse LLM response as JSON. Returning raw text.")
     return {"raw_response": raw}
 
 
-# ─────────────────────────────────────────────────────────
-# RAG Pipeline
-# ─────────────────────────────────────────────────────────
-
 class RAGPipeline:
-    """
-    End-to-end RAG pipeline: retrieval + LLM generation.
-
-    Parameters
-    ----------
-    retriever : RecipeRetriever, optional
-    llm       : LLMClient, optional
-    """
+    """End-to-end RAG pipeline: retrieval + LLM generation."""
 
     def __init__(
         self,
@@ -192,13 +116,9 @@ class RAGPipeline:
         if self._retriever is None:
             self._retriever = RecipeRetriever()
         self._retriever.load()
-
         if self._llm is None:
             self._llm = LLMClient()
-
         self._loaded = True
-
-    # ── Main entry point ──────────────────────────────────
 
     async def run(
         self,
@@ -207,27 +127,10 @@ class RAGPipeline:
         context: str = "",
         include_nutrition: bool = False,
     ) -> dict[str, Any]:
-        """
-        Full RAG pipeline: retrieve → generate → return structured result.
-
-        Parameters
-        ----------
-        ingredients      : list[str]  user's available ingredients
-        top_k            : int        number of recipes to retrieve
-        context          : str        optional free-text hint (cuisine, diet …)
-        include_nutrition: bool       whether to add a nutrition estimate
-
-        Returns
-        -------
-        dict with keys matching the API response schema:
-            recipe, score, steps, missing_ingredients, substitutions,
-            all_candidates (list of retrieved recipes with scores),
-            nutrition (optional)
-        """
+        """Full RAG pipeline: retrieve → generate → return structured result."""
         self._ensure_loaded()
         top_k = top_k or settings.retrieval.top_k
 
-        # ── Step 1: Retrieve ──────────────────────────────
         logger.info(f"Retrieving top-{top_k} recipes for: {ingredients}")
         candidates: list[RetrievedRecipe] = self._retriever.retrieve(
             ingredients=ingredients,
@@ -246,7 +149,6 @@ class RAGPipeline:
                 "error": "No recipes matched the given ingredients.",
             }
 
-        # ── Step 2: Build LLM context ─────────────────────
         context_recipes = candidates[: settings.llm.context_recipes]
         recipe_context_str = format_recipe_context(context_recipes)
 
@@ -256,22 +158,15 @@ class RAGPipeline:
             recipes_context=recipe_context_str,
         )
 
-        # ── Step 3: LLM generation ────────────────────────
         logger.info("Calling LLM for recipe generation…")
-        raw_response = await self._llm.chat(
-            system=SYSTEM_PROMPT,
-            user=user_prompt,
-        )
-
+        raw_response = await self._llm.chat(system=SYSTEM_PROMPT, user=user_prompt)
         generated = _parse_json_response(raw_response)
 
-        # ── Step 4: Merge static substitution engine ──────
-        # Ensure substitutions are filled even if LLM missed some
+        # Merge static substitutions with LLM-generated ones
         best_candidate = candidates[0]
         static_subs = get_substitutions(best_candidate.missing_ingredients)
         merged_subs = {**static_subs, **(generated.get("substitutions") or {})}
 
-        # ── Step 5: (Optional) Nutrition estimate ─────────
         nutrition = None
         if include_nutrition and "recipe" in generated:
             nutrition = await self._get_nutrition(
@@ -279,7 +174,6 @@ class RAGPipeline:
                 ingredients=ingredients,
             )
 
-        # ── Assemble final response ───────────────────────
         result: dict[str, Any] = {
             "recipe": generated.get("recipe", best_candidate.title),
             "score": best_candidate.combined_score,
@@ -301,13 +195,7 @@ class RAGPipeline:
         logger.info(f"Pipeline complete. Best recipe: {result['recipe']}")
         return result
 
-    # ── Nutrition sub-call ────────────────────────────────
-
-    async def _get_nutrition(
-        self,
-        recipe_title: str,
-        ingredients: list[str],
-    ) -> dict:
+    async def _get_nutrition(self, recipe_title: str, ingredients: list[str]) -> dict:
         """Fetch a lightweight nutrition estimate from the LLM."""
         prompt = NUTRITION_PROMPT.format(
             recipe_title=recipe_title,
@@ -316,28 +204,15 @@ class RAGPipeline:
         raw = await self._llm.chat(system=SYSTEM_PROMPT, user=prompt)
         return _parse_json_response(raw)
 
-    # ── Substitution-only mode ────────────────────────────
-
     async def get_substitutions_only(
         self,
         recipe_title: str,
         missing_ingredients: list[str],
     ) -> dict:
-        """
-        Lightweight call: ask the LLM for substitutions without full retrieval.
-
-        Parameters
-        ----------
-        recipe_title        : str
-        missing_ingredients : list[str]
-
-        Returns
-        -------
-        dict  mapping ingredient → substitute
-        """
+        """Ask the LLM for substitutions without running full retrieval."""
         self._ensure_loaded()
 
-        # First try static lookup
+        # Try static lookup first
         static = get_substitutions(missing_ingredients)
         missing_without_static = [m for m in missing_ingredients if m not in static]
 

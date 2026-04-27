@@ -1,19 +1,12 @@
-"""
-src/api/app.py
-────────────────────────────────────────────────────────
-FastAPI application for the Recipe GenAI System.
+"""FastAPI application for the Recipe GenAI System.
 
-Endpoints
-─────────
-POST /api/v1/recommend        – main RAG-powered recommendation
-POST /api/v1/substitutions    – ingredient substitution lookup
-GET  /api/v1/health           – health check
-GET  /api/v1/store/info       – vector store stats
-POST /api/v1/search/quick     – fast retrieval without LLM
-
-Run locally
-───────────
-    uvicorn src.api.app:app --reload --port 8000
+Endpoints:
+    POST /api/v1/recommend       - RAG-powered recipe recommendation
+    POST /api/v1/substitutions   - ingredient substitution lookup
+    GET  /api/v1/health          - health check
+    GET  /api/v1/store/info      - vector store stats
+    POST /api/v1/search/quick    - fast retrieval without LLM
+    POST /api/v1/chat            - free-form culinary AI chat
 """
 
 from __future__ import annotations
@@ -35,10 +28,6 @@ from src.retrieval.retriever import RecipeRetriever
 from src.utils.config import settings
 
 
-# ─────────────────────────────────────────────────────────
-# Application state (shared singletons)
-# ─────────────────────────────────────────────────────────
-
 class AppState:
     pipeline: RAGPipeline | None = None
     retriever: RecipeRetriever | None = None
@@ -47,20 +36,14 @@ class AppState:
 app_state = AppState()
 
 
-# ─────────────────────────────────────────────────────────
-# Startup / shutdown lifecycle
-# ─────────────────────────────────────────────────────────
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load heavy models once at startup, release at shutdown."""
     logger.info("🚀 Starting Recipe GenAI API…")
 
-    # Initialise shared retriever (loads FAISS index + embedding model)
     app_state.retriever = RecipeRetriever()
     app_state.retriever.load()
 
-    # Initialise RAG pipeline with the shared retriever
     app_state.pipeline = RAGPipeline(retriever=app_state.retriever)
     app_state.pipeline._ensure_loaded()
 
@@ -69,10 +52,6 @@ async def lifespan(app: FastAPI):
 
     logger.info("Shutting down Recipe GenAI API…")
 
-
-# ─────────────────────────────────────────────────────────
-# FastAPI app
-# ─────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="Recipe GenAI System",
@@ -94,41 +73,19 @@ app.add_middleware(
 )
 
 
-# ─────────────────────────────────────────────────────────
 # Request / Response schemas
-# ─────────────────────────────────────────────────────────
 
 class RecommendRequest(BaseModel):
-    ingredients: list[str] = Field(
-        ...,
-        min_length=1,
-        max_length=30,
-        description="List of available ingredients (raw names, quantities optional).",
-        examples=[["eggs", "flour", "butter", "sugar", "milk"]],
-    )
-    top_k: int = Field(
-        default=5,
-        ge=1,
-        le=20,
-        description="Number of recipe candidates to retrieve.",
-    )
-    context: Optional[str] = Field(
-        default="",
-        max_length=200,
-        description="Optional free-text hint (cuisine type, dietary restriction, etc.)",
-        examples=["Italian, low-carb"],
-    )
-    include_nutrition: bool = Field(
-        default=False,
-        description="Include a nutritional estimate in the response.",
-    )
+    ingredients: list[str] = Field(default_factory=list)
+    top_k: int = Field(default=5, ge=1, le=20)
+    context: Optional[str] = Field(default="")
+    include_nutrition: bool = Field(default=False)
+    image_base64: Optional[str] = Field(default=None)
 
     @field_validator("ingredients")
     @classmethod
     def validate_ingredients(cls, v):
         cleaned = [i.strip() for i in v if i.strip()]
-        if not cleaned:
-            raise ValueError("ingredients list must not be empty after stripping whitespace.")
         return cleaned
 
 
@@ -149,10 +106,7 @@ class ChatRequest(BaseModel):
     history: Optional[list[dict]] = Field(default=None)
 
 
-# ─────────────────────────────────────────────────────────
-# Middleware: request timing
-# ─────────────────────────────────────────────────────────
-
+# Middleware: track per-request processing time
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
     start = time.perf_counter()
@@ -162,16 +116,11 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 
-# ─────────────────────────────────────────────────────────
 # Endpoints
-# ─────────────────────────────────────────────────────────
 
 @app.get("/api/v1/health", tags=["System"])
 async def health_check() -> dict:
-    """
-    Health check endpoint.
-    Returns API status and vector store size.
-    """
+    """Health check — returns API status and vector store size."""
     store_size = app_state.retriever.store_size if app_state.retriever else 0
     return {
         "status": "ok",
@@ -204,26 +153,38 @@ async def store_info() -> dict:
 )
 async def recommend_recipe(body: RecommendRequest) -> dict[str, Any]:
     """
-    **Main endpoint.**
-
-    Accepts a list of available ingredients and returns:
-    - Best matching recipe (LLM-refined)
-    - Step-by-step cooking instructions
-    - Missing ingredients
-    - Ingredient substitutions
-    - All candidate recipes with similarity scores
-    - Optional nutritional estimate
+    Agentic workflow: if an image is provided, extracts ingredients first using LangGraph.
+    Then retrieves candidates and generates a final JSON recipe.
     """
-    if not app_state.pipeline:
-        raise HTTPException(status_code=503, detail="Pipeline not initialised.")
+    from src.agent.recipe_graph import recipe_agent
+
+    if not body.ingredients and not body.image_base64:
+        raise HTTPException(status_code=400, detail="Must provide ingredients or an image_base64.")
 
     try:
-        result = await app_state.pipeline.run(
-            ingredients=body.ingredients,
-            top_k=body.top_k,
-            context=body.context or "",
-            include_nutrition=body.include_nutrition,
-        )
+        initial_state = {
+            "image_base64": body.image_base64,
+            "ingredients": body.ingredients,
+            "context": body.context or "",
+            "top_k": body.top_k,
+            "include_nutrition": body.include_nutrition,
+            "vision_extracted_ingredients": [],
+            "retrieved_candidates": [],
+            "final_recipe": {},
+            "error": None
+        }
+
+        result = await recipe_agent.ainvoke(initial_state)
+
+        if result.get("error"):
+            raise HTTPException(status_code=500, detail=result["error"])
+
+        final = result["final_recipe"]
+        if result.get("vision_extracted_ingredients"):
+            final["vision_ingredients"] = result["vision_extracted_ingredients"]
+
+        return final
+
     except Exception as exc:
         logger.exception("Error in recommend_recipe")
         raise HTTPException(
@@ -231,19 +192,10 @@ async def recommend_recipe(body: RecommendRequest) -> dict[str, Any]:
             detail=f"Pipeline error: {str(exc)}",
         ) from exc
 
-    return result
 
-
-@app.post(
-    "/api/v1/substitutions",
-    tags=["Recipes"],
-    summary="Get ingredient substitutions",
-)
+@app.post("/api/v1/substitutions", tags=["Recipes"], summary="Get ingredient substitutions")
 async def get_substitutions(body: SubstitutionRequest) -> dict[str, Any]:
-    """
-    Returns ingredient substitutions for missing items.
-    Combines static lookup table + optional LLM refinement.
-    """
+    """Returns ingredient substitutions — combines static lookup + LLM refinement."""
     if not app_state.pipeline:
         raise HTTPException(status_code=503, detail="Pipeline not initialised.")
 
@@ -256,10 +208,7 @@ async def get_substitutions(body: SubstitutionRequest) -> dict[str, Any]:
         logger.exception("Error in get_substitutions")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return {
-        "recipe": body.recipe_title,
-        "substitutions": subs,
-    }
+    return {"recipe": body.recipe_title, "substitutions": subs}
 
 
 @app.post(
@@ -268,11 +217,7 @@ async def get_substitutions(body: SubstitutionRequest) -> dict[str, Any]:
     summary="Fast recipe search without LLM (retrieval only)",
 )
 async def quick_search(body: QuickSearchRequest) -> dict[str, Any]:
-    """
-    Performs only the FAISS similarity search.
-    Much faster than /recommend — no LLM call.
-    Returns raw candidates with similarity scores.
-    """
+    """FAISS-only search — much faster than /recommend, no LLM call."""
     if not app_state.retriever:
         raise HTTPException(status_code=503, detail="Retriever not initialised.")
 
@@ -293,26 +238,17 @@ async def quick_search(body: QuickSearchRequest) -> dict[str, Any]:
     }
 
 
-@app.post(
-    "/api/v1/chat",
-    tags=["Chat"],
-    summary="Interactive AI Chat",
-)
+@app.post("/api/v1/chat", tags=["Chat"], summary="Interactive AI Chat")
 async def chat_interaction(body: ChatRequest) -> dict[str, Any]:
-    """
-    Answers free-form questions from the user using the configured LLM.
-    """
+    """Answers free-form culinary questions using the configured LLM."""
     if not app_state.pipeline:
         raise HTTPException(status_code=503, detail="Pipeline not initialised.")
-    
+
     try:
-        system_prompt = (
-            "You are a helpful culinary AI assistant. "
-            "Answer the user's question concisely. "
-        )
+        system_prompt = "You are a helpful culinary AI assistant. Answer the user's question concisely. "
         if body.context:
             system_prompt += f"\nContext provided by the user's current view:\n{body.context}"
-            
+
         response = await app_state.pipeline._llm.chat(
             system=system_prompt,
             user=body.message,
@@ -321,13 +257,9 @@ async def chat_interaction(body: ChatRequest) -> dict[str, Any]:
     except Exception as exc:
         logger.exception("Error in chat_interaction")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-        
+
     return {"reply": response}
 
-
-# ─────────────────────────────────────────────────────────
-# Global exception handler
-# ─────────────────────────────────────────────────────────
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -338,32 +270,25 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# ─────────────────────────────────────────────────────────
-# Serve React Frontend
-# ─────────────────────────────────────────────────────────
-
+# Serve React frontend from the built dist folder
 frontend_dist = Path("frontend/dist")
 
 if frontend_dist.is_dir():
-    # Serve static assets (js, css, images) from the assets folder
     assets_dir = frontend_dist / "assets"
     if assets_dir.is_dir():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-        
-    # Serve other static files at the root (favicon.svg, etc)
+
     for file in frontend_dist.iterdir():
         if file.is_file():
             @app.get(f"/{file.name}", tags=["Frontend"])
             async def serve_file(request: Request, f_path=file):
                 return FileResponse(f_path)
 
-    # Catch-all route for SPA routing (must be last!)
+    # Catch-all for SPA routing (must be last)
     @app.get("/{full_path:path}", tags=["Frontend"])
     async def serve_spa(request: Request, full_path: str):
-        # Exclude API routes just in case
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API route not found")
-            
         index_file = frontend_dist / "index.html"
         if index_file.is_file():
             return FileResponse(index_file)
@@ -371,9 +296,6 @@ if frontend_dist.is_dir():
 else:
     logger.warning("Frontend dist directory not found. React app will not be served.")
 
-# ─────────────────────────────────────────────────────────
-# CLI entry-point
-# ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn

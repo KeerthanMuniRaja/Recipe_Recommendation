@@ -16,8 +16,14 @@ openai
 groq
 langchain
 langchain-openai
+langchain-groq
 langchain-community
+langchain-google-genai
+langgraph
 tiktoken
+
+# Image Processing (vision ingredient extraction)
+Pillow
 
 # API
 fastapi
