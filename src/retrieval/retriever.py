@@ -1,25 +1,4 @@
-"""
-src/retrieval/retriever.py
-────────────────────────────────────────────────────────
-High-level retrieval interface that wires together:
-  • RecipeEmbedder   – encodes the user's ingredient query
-  • RecipeVectorStore – performs FAISS similarity search
-  • ingredient_parser – computes matched/missing/substitutions
-
-Usage
-─────
-    from src.retrieval.retriever import RecipeRetriever
-
-    retriever = RecipeRetriever()
-    retriever.load()   # loads embedder model + FAISS index
-
-    results = retriever.retrieve(
-        ingredients=["eggs", "flour", "butter", "sugar"],
-        top_k=5,
-        context="birthday cake, chocolate"
-    )
-    # results → list[RetrievedRecipe]
-"""
+"""High-level retrieval interface: encodes query → FAISS search → post-processing."""
 
 from __future__ import annotations
 
@@ -38,29 +17,9 @@ from src.preprocessing.ingredient_parser import (
 from src.utils.config import settings
 
 
-# ─────────────────────────────────────────────────────────
-# Data container
-# ─────────────────────────────────────────────────────────
-
 @dataclass
 class RetrievedRecipe:
-    """
-    A single retrieved recipe with its full context.
-
-    Attributes
-    ----------
-    id               : str
-    title            : str
-    ingredients      : list[str]   (raw from dataset)
-    instructions     : str         (clean, newline-separated steps)
-    tags             : list[str]
-    similarity_score : float       (cosine similarity, 0–1)
-    matched_ingredients  : list[str]
-    missing_ingredients  : list[str]
-    ingredient_score     : float   (fraction of recipe covered)
-    combined_score       : float   (weighted blend of similarity + ingredient)
-    substitutions    : dict[str, list[str]]
-    """
+    """A single retrieved recipe with scores and ingredient match details."""
     id: str
     title: str
     ingredients: list[str]
@@ -89,21 +48,10 @@ class RetrievedRecipe:
         }
 
 
-# ─────────────────────────────────────────────────────────
-# Retriever
-# ─────────────────────────────────────────────────────────
-
 class RecipeRetriever:
-    """
-    Orchestrates embedding → vector search → post-processing.
+    """Orchestrates embedding → vector search → post-processing."""
 
-    Parameters
-    ----------
-    embedder     : RecipeEmbedder, optional
-    vector_store : RecipeVectorStore, optional
-    """
-
-    # Blend weight for final score:  combined = α·similarity + (1-α)·ingredient
+    # Final score = 60% similarity + 40% ingredient coverage
     SIMILARITY_WEIGHT = 0.6
     INGREDIENT_WEIGHT = 0.4
 
@@ -116,26 +64,17 @@ class RecipeRetriever:
         self._vector_store = vector_store
         self._loaded = False
 
-    # ── Lifecycle ─────────────────────────────────────────
-
     def load(self) -> None:
-        """
-        Initialise the embedder model and load the FAISS index.
-        Safe to call multiple times (no-op if already loaded).
-        """
+        """Initialise the embedder and load the FAISS index. Safe to call multiple times."""
         if self._loaded:
             return
-
         if self._embedder is None:
             self._embedder = RecipeEmbedder()
         if self._vector_store is None:
             self._vector_store = RecipeVectorStore()
             self._vector_store.load()
-
         self._loaded = True
         logger.info("RecipeRetriever ready.")
-
-    # ── Public API ────────────────────────────────────────
 
     def retrieve(
         self,
@@ -143,38 +82,20 @@ class RecipeRetriever:
         top_k: int | None = None,
         context: str = "",
     ) -> list[RetrievedRecipe]:
-        """
-        Retrieve and rank the top-k recipes for a given ingredient list.
-
-        Parameters
-        ----------
-        ingredients : list[str]
-            Raw ingredient strings from the user.
-        top_k : int, optional
-            Number of recipes to return. Defaults to config.
-        context : str, optional
-            Free-text context to bias the query (cuisine, diet, etc.)
-
-        Returns
-        -------
-        list[RetrievedRecipe]
-            Sorted by combined_score descending.
-        """
+        """Retrieve and rank the top-k recipes for a given ingredient list."""
         if not self._loaded:
             self.load()
 
         top_k = top_k or settings.retrieval.top_k
 
-        # 1. Encode query
         logger.debug(f"Encoding query for ingredients: {ingredients}")
         query_vec = self._embedder.encode_query(ingredients, extra_context=context)
 
-        # 2. FAISS search (retrieve more than top_k so we can re-rank)
+        # Fetch 3x candidates so we have room to re-rank
         candidate_k = min(top_k * 3, self._vector_store.size or top_k)
         raw_results = self._vector_store.search(query_vec, top_k=candidate_k)
         logger.debug(f"FAISS returned {len(raw_results)} candidates.")
 
-        # 3. Post-process each candidate
         enriched: list[RetrievedRecipe] = []
         for raw in raw_results:
             recipe_ings = raw.get("ingredients", [])
@@ -190,10 +111,7 @@ class RecipeRetriever:
 
             sim_score = raw.get("similarity_score", 0.0)
             ing_score = match_result["score"]
-            combined = (
-                self.SIMILARITY_WEIGHT * sim_score
-                + self.INGREDIENT_WEIGHT * ing_score
-            )
+            combined = self.SIMILARITY_WEIGHT * sim_score + self.INGREDIENT_WEIGHT * ing_score
 
             enriched.append(
                 RetrievedRecipe(
@@ -211,9 +129,7 @@ class RecipeRetriever:
                 )
             )
 
-        # 4. Re-rank by combined score
         enriched.sort(key=lambda r: r.combined_score, reverse=True)
-
         logger.info(f"Returning top {min(top_k, len(enriched))} recipes.")
         return enriched[:top_k]
 

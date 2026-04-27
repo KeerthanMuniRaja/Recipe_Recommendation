@@ -1,7 +1,5 @@
-"""
-src/agent/recipe_graph.py
-LangGraph implementation for Recipe Recommendation including Vision extraction.
-"""
+"""LangGraph agent for Recipe Recommendation with optional Vision extraction."""
+
 from typing import TypedDict, List, Dict, Any, Optional
 
 from langgraph.graph import StateGraph, START, END
@@ -12,18 +10,19 @@ from src.retrieval.retriever import RecipeRetriever
 from src.rag.prompt_templates import format_recipe_context, RAG_USER_PROMPT, SYSTEM_PROMPT
 from src.rag.rag_pipeline import _parse_json_response, LLMClient
 
+
 class RecipeState(TypedDict):
     image_base64: Optional[str]
     ingredients: List[str]
     context: str
     top_k: int
     include_nutrition: bool
-    
-    # Updated by nodes
+    # Populated by nodes
     vision_extracted_ingredients: List[str]
     retrieved_candidates: List[Any]
     final_recipe: Dict[str, Any]
     error: Optional[str]
+
 
 async def extract_vision_node(state: RecipeState) -> RecipeState:
     if not state.get("image_base64"):
@@ -41,25 +40,21 @@ async def extract_vision_node(state: RecipeState) -> RecipeState:
             api_key=gemini_key,
             max_output_tokens=512,
         )
-    elif provider == "groq" or provider == "openai":
+    elif provider in ("groq", "openai"):
         if openai_key:
             from langchain_openai import ChatOpenAI
-            vision_llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                api_key=openai_key,
-                max_tokens=512,
-            )
+            vision_llm = ChatOpenAI(model="gpt-4o-mini", api_key=openai_key, max_tokens=512)
         else:
             return {"error": "No valid vision API key found. Please add GEMINI_API_KEY or OPENAI_API_KEY to .env"}
     else:
         return {"error": f"Vision not supported for provider: {provider}"}
 
-    # Support JPEG, PNG, WEBP — default to jpeg if unknown
+    # Detect image MIME type from base64 prefix
     image_b64 = state["image_base64"]
     mime = "image/jpeg"
-    if image_b64.startswith("iVBOR"):   # PNG magic bytes in base64
+    if image_b64.startswith("iVBOR"):
         mime = "image/png"
-    elif image_b64.startswith("UklGR"): # WEBP
+    elif image_b64.startswith("UklGR"):
         mime = "image/webp"
 
     msg = HumanMessage(
@@ -69,17 +64,13 @@ async def extract_vision_node(state: RecipeState) -> RecipeState:
                 "Return ONLY a comma-separated list of ingredient names (e.g. tomato, onion, garlic). "
                 "No sentences, no explanations, just the comma-separated list."
             )},
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{image_b64}"},
-            },
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
         ]
     )
-    
+
     try:
         response = await vision_llm.ainvoke([msg])
         text = response.content.strip()
-        # Clean up: remove any leading labels the model may add
         if ":" in text and text.index(":") < 30:
             text = text.split(":", 1)[1].strip()
         found = [i.strip().lower() for i in text.split(',') if i.strip()]
@@ -87,18 +78,18 @@ async def extract_vision_node(state: RecipeState) -> RecipeState:
     except Exception as e:
         return {"error": f"Vision extraction failed: {str(e)}"}
 
+
 def retrieve_node(state: RecipeState) -> RecipeState:
     if state.get("error"):
         return {}
 
     retriever = RecipeRetriever()
     retriever.load()
-    
+
     all_ings = state.get("ingredients", []) + state.get("vision_extracted_ingredients", [])
-    
     if not all_ings:
         return {"error": "No ingredients provided or found in image."}
-        
+
     candidates = retriever.retrieve(
         ingredients=all_ings,
         top_k=state.get("top_k", 5),
@@ -106,29 +97,30 @@ def retrieve_node(state: RecipeState) -> RecipeState:
     )
     return {"retrieved_candidates": candidates}
 
+
 async def generate_node(state: RecipeState) -> RecipeState:
     if state.get("error"):
         return {}
-        
+
     candidates = state.get("retrieved_candidates", [])
     if not candidates:
         return {"final_recipe": {"recipe": "No matching recipe found", "error": "No recipes matched."}}
-        
+
     context_recipes = candidates[: settings.llm.context_recipes]
     context_block = format_recipe_context(context_recipes)
-    
+
     all_ings = state.get("ingredients", []) + state.get("vision_extracted_ingredients", [])
     context_hint = state.get("context", "")
     ingredients_str = ", ".join(all_ings)
     if context_hint:
         ingredients_str += f" (preferences: {context_hint})"
-    
+
     user_prompt = RAG_USER_PROMPT.format(
         user_ingredients=ingredients_str,
         n_recipes=len(context_recipes),
         recipes_context=context_block
     )
-    
+
     llm = LLMClient()
     try:
         response_text = await llm.chat(SYSTEM_PROMPT, user_prompt)
@@ -140,7 +132,8 @@ async def generate_node(state: RecipeState) -> RecipeState:
     except Exception as e:
         return {"error": f"Recipe generation failed: {str(e)}"}
 
-# Build Graph
+
+# Build and compile the LangGraph workflow
 workflow = StateGraph(RecipeState)
 workflow.add_node("vision_extract", extract_vision_node)
 workflow.add_node("retrieve", retrieve_node)

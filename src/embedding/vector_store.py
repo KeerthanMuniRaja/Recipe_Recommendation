@@ -1,29 +1,4 @@
-"""
-src/embedding/vector_store.py
-────────────────────────────────────────────────────────
-FAISS-backed vector store for recipe embeddings.
-
-Features
-────────
-• Build a new index from scratch and persist to disk.
-• Load an existing index + metadata from disk.
-• Perform top-k similarity search.
-• Supports two index types:
-    "flat"  - IndexFlatIP (exact inner-product / cosine, small datasets)
-    "ivf"   - IndexIVFFlat (approximate, faster for >100k recipes)
-
-Usage
-─────
-    from src.embedding.vector_store import RecipeVectorStore
-
-    store = RecipeVectorStore()
-    store.build(vectors, df)          # build from scratch
-    store.save()                      # persist to disk
-
-    store2 = RecipeVectorStore()
-    store2.load()                     # restore from disk
-    results = store2.search(query_vec, top_k=5)
-"""
+"""FAISS-backed vector store for recipe embeddings. Supports flat (exact) and IVF (approximate) indexes."""
 
 from __future__ import annotations
 
@@ -40,14 +15,7 @@ from src.utils.config import settings
 
 
 class RecipeVectorStore:
-    """
-    Manages the FAISS index and associated recipe metadata.
-
-    Attributes
-    ----------
-    index : faiss.Index
-    metadata : pd.DataFrame   (aligned with FAISS index order)
-    """
+    """Manages the FAISS index and associated recipe metadata."""
 
     def __init__(
         self,
@@ -56,34 +24,17 @@ class RecipeVectorStore:
     ) -> None:
         self.index_path = index_path or settings.paths.faiss_index
         self.metadata_path = (
-            metadata_path
-            or settings.paths.faiss_index.with_suffix(".meta.pkl")
+            metadata_path or settings.paths.faiss_index.with_suffix(".meta.pkl")
         )
         self.index: Optional[faiss.Index] = None
         self.metadata: Optional[pd.DataFrame] = None
 
-    # ── Build ─────────────────────────────────────────────
-
-    def build(
-        self,
-        vectors: np.ndarray,
-        metadata: pd.DataFrame,
-    ) -> None:
-        """
-        Build the FAISS index from recipe embedding vectors.
-
-        Parameters
-        ----------
-        vectors  : np.ndarray  shape (N, dim), dtype float32
-                   Should already be L2-normalised (from embedder).
-        metadata : pd.DataFrame  rows aligned with vectors
-        """
+    def build(self, vectors: np.ndarray, metadata: pd.DataFrame) -> None:
+        """Build a FAISS index from L2-normalised recipe embedding vectors."""
         n, dim = vectors.shape
         index_type = settings.retrieval.index_type
 
-        logger.info(
-            f"Building FAISS index ({index_type}) for {n:,} vectors of dim {dim}."
-        )
+        logger.info(f"Building FAISS index ({index_type}) for {n:,} vectors of dim {dim}.")
 
         if index_type == "ivf":
             nlist = settings.retrieval.nlist
@@ -97,10 +48,7 @@ class RecipeVectorStore:
 
         self.index.add(vectors)
         self.metadata = metadata.reset_index(drop=True)
-
         logger.info(f"FAISS index built. Total vectors: {self.index.ntotal:,}")
-
-    # ── Persist ───────────────────────────────────────────
 
     def save(self) -> None:
         """Write the index and metadata to disk."""
@@ -110,8 +58,6 @@ class RecipeVectorStore:
             pickle.dump(self.metadata, f)
         logger.info(f"Index saved to {self.index_path}")
         logger.info(f"Metadata saved to {self.metadata_path}")
-
-    # ── Load ──────────────────────────────────────────────
 
     def load(self) -> None:
         """Load the index and metadata from disk."""
@@ -128,26 +74,8 @@ class RecipeVectorStore:
             f"and {len(self.metadata):,} metadata rows."
         )
 
-    # ── Search ────────────────────────────────────────────
-
-    def search(
-        self,
-        query_vector: np.ndarray,
-        top_k: int | None = None,
-    ) -> list[dict]:
-        """
-        Retrieve the top-k most similar recipes for a query vector.
-
-        Parameters
-        ----------
-        query_vector : np.ndarray  shape (1, dim) or (dim,), float32
-        top_k        : int  (defaults to config value)
-
-        Returns
-        -------
-        list[dict]  each dict has keys: id, title, ingredients,
-                    instructions, tags, similarity_score
-        """
+    def search(self, query_vector: np.ndarray, top_k: int | None = None) -> list[dict]:
+        """Return the top-k most similar recipes for a query vector."""
         if self.index is None or self.metadata is None:
             raise RuntimeError("Vector store is not loaded. Call build() or load() first.")
 
@@ -161,7 +89,7 @@ class RecipeVectorStore:
         results = []
         for score, idx in zip(scores[0], indices[0]):
             if idx == -1:
-                continue  # FAISS padding for IVF
+                continue  # FAISS padding for IVF indexes
             if score < settings.retrieval.score_threshold:
                 continue
             row = self.metadata.iloc[idx].to_dict()
@@ -170,31 +98,13 @@ class RecipeVectorStore:
 
         return results
 
-    # ── Incremental update ────────────────────────────────
-
-    def add_recipes(
-        self,
-        new_vectors: np.ndarray,
-        new_metadata: pd.DataFrame,
-    ) -> None:
-        """
-        Add new recipe vectors to an existing index without rebuilding.
-
-        Parameters
-        ----------
-        new_vectors  : np.ndarray  (M, dim) float32, L2-normalised
-        new_metadata : pd.DataFrame  rows aligned with new_vectors
-        """
+    def add_recipes(self, new_vectors: np.ndarray, new_metadata: pd.DataFrame) -> None:
+        """Add new recipe vectors to an existing index without rebuilding."""
         if self.index is None:
             raise RuntimeError("Index must be built or loaded before adding vectors.")
         self.index.add(new_vectors)
-        self.metadata = pd.concat(
-            [self.metadata, new_metadata], ignore_index=True
-        )
-        logger.info(
-            f"Added {len(new_vectors)} vectors. "
-            f"Total: {self.index.ntotal:,}"
-        )
+        self.metadata = pd.concat([self.metadata, new_metadata], ignore_index=True)
+        logger.info(f"Added {len(new_vectors)} vectors. Total: {self.index.ntotal:,}")
 
     @property
     def size(self) -> int:
